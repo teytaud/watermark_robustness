@@ -1,6 +1,11 @@
 # Robustness of AI-Image Detectors: Fundamental Limits and Practical Attacks
 
 
+OT: just modified _bash_eval_wm.sh so that it creates copies of images in "myimages" into files for no_aug, diffpure0.1,
+diffpure0.2, diffpure0.3
+
+
+
 [![Paper](https://img.shields.io/badge/cs.CV-Paper-b31b1b?logo=arxiv&logoColor=red)](https://arxiv.org/abs/2310.00076)
 
 > **Robustness of AI-Image Detectors: Fundamental Limits and Practical Attacks**<br>

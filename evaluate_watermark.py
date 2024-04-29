@@ -267,14 +267,14 @@ def get_transforms(aug_str, fname="base", save_images=False):
     else:
         print(f"Augmentation {aug} not implemented!!!")
         return None, None
-    
+    print("We return a transform and org_transform {transform} {org_transform}")   
     return transform, org_transform
 
 
 def main():
     parser = ArgumentParser()
     parser.add_argument("--wm-method", default="dwtDct", type=str,
-        choices=["dwtDct", "dwtDctSvd", "rivaGan", "treeRing", 'watermarkDM', 'stegaStamp', 'MBRS'])
+        choices=["dwtDct", "dwtDctSvd", "rivaGan", "treeRing", 'watermarkDM', 'stegaStamp', 'MBRS', 'none'])
     parser.add_argument("--attack", default="diffpure", type=str,
         choices=["no_aug", "diffpure", "diffpure_latent", 'common_augs', 'image_edit'])
     parser.add_argument("--data-dir", default="images/imagenet/dwtDct", type=str)
@@ -318,14 +318,16 @@ def main():
     fpr_th = 0.1
 
     for aug in aug_list:
-        print("Augmentation:", aug)
+        print("Augmentation:", aug, args.save_images)
 
         transform, org_transform = get_transforms(aug, args.wm_method, args.save_images)
         if transform == None:
+            print("Transform is None")
             continue
         
-        dataset = CustomImageFolder(args.data_dir, transform=transform)
+        dataset = CustomImageFolder(args.data_dir, transform=transform, annot=aug)
         data_cnt = len(dataset)
+        print(len(dataset), " images")
         org_dataset = CustomImageFolder(args.org_data_dir, transform=org_transform, data_cnt=data_cnt)
 
         th_results[aug] = {}
@@ -401,7 +403,8 @@ def main():
             labels[aug] = [1 for i in range(len(preds_wm))] + [0 for i in range(len(preds_org))] 
             
         else:
-            raise ModuleNotFoundError(f"Method {args.wm_method} not implemented")
+            if args.wm_method != "none":
+                raise ModuleNotFoundError(f"Method {args.wm_method} not implemented")
 
         for bit_th in bit_ths:
             eval_dict = {'tp': 0, 'fp': 0, 'fn': 0, 'tn': 0}
