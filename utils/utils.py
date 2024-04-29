@@ -29,7 +29,8 @@ def get_imagenet_class_name(filename):
 
 
 class CustomImageFolder(Dataset):
-    def __init__(self, data_dir, transform=None, data_cnt=-1, y=0, shuffle=False, return_fname=False, fname_format="*"):
+    def __init__(self, data_dir, transform=None, data_cnt=-1, y=0, shuffle=False, return_fname=False, fname_format="*", annot=""):
+        print("Transform is ", transform)
         self.data_dir = data_dir
         self.filenames = glob.glob(os.path.join(data_dir, f"*/{fname_format}.png"))
         self.filenames.extend(glob.glob(os.path.join(data_dir, f"*/{fname_format}.jpeg")))
@@ -51,15 +52,22 @@ class CustomImageFolder(Dataset):
         self.img_ids = [x.replace(data_dir, '').replace('/', '_').split('.')[0] for x in self.filenames]
         self.transform = transform
         self.y = y
+        self.annot = annot
         self.return_fname = return_fname
+        for i in range(len(self.filenames)):
+            self.__getitem__(i)
 
     def __getitem__(self, idx):
         filename = self.filenames[idx]
         image = Image.open(filename).convert('RGB')
         if self.transform:
+            print("We apply the transformation")
             image = self.transform(image)
+            transforms.ToPILImage()(image).save(self.annot + filename.replace("/", "__"))  # I love files
         if self.return_fname:
+            print(f"We return the image, y and the filename")
             return image, self.y, filename
+        print("We return the image")
         return image, self.y
 
     def __len__(self):

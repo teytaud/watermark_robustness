@@ -1,5 +1,10 @@
 #!/bin/bash
 
+python evaluate_watermark.py \
+  --wm-method none \
+  --attack diffpure \
+  --data-dir myimages \
+  --out-fname out/ --save-images
 
 # python evaluate_watermark.py \
 # --wm-method MBRS \
