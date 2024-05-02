@@ -14,6 +14,15 @@ from torchvision.utils import save_image
 import yaml
 import random
 
+##### TOM IMPORT
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+import sys
+sys.path.append('/private/home/tomsander/Watermark-Attack')
+from watermark_attack.img_wm.watermarker import StableSig
+from watermark_attack.img_wm import utils_img
+sys.path.remove('/private/home/tomsander/Watermark-Attack')
+
 from imwatermark import WatermarkEncoder, WatermarkDecoder
 from diffusers import StableDiffusionInstructPix2PixPipeline, EulerAncestralDiscreteScheduler
 from diffusers import StableDiffusionImg2ImgPipeline
@@ -82,7 +91,8 @@ class AddGaussianNoise():
 
 class DiffPure():
     def __init__(self, steps=0.4, save_imgs=False, fname="base"):
-        with open('DiffPure/configs/imagenet.yml', 'r') as f:
+        # with open('DiffPure/configs/imagenet.yml', 'r') as f:
+        with open('DiffPure/configs/imagenet_512.yml', 'r') as f:
             config = yaml.safe_load(f)
         self.config = dict2namespace(config)
         self.runner = GuidedDiffusion(self.config, t = int(steps * int(self.config.model.timestep_respacing)), model_dir = 'DiffPure/pretrained/guided_diffusion')
@@ -271,10 +281,214 @@ def get_transforms(aug_str, fname="base", save_images=False):
     return transform, org_transform
 
 
+def get_transforms_stable_sig(aug_str, fname="base", save_images=False):
+    aug = aug_str.split(',')[0]
+    params = aug_str.split(',')[1:]
+    transform = transforms.Compose(
+        [
+            transforms.ToTensor(),
+            # transforms.Resize(256),
+            # transforms.ToTensor(),
+            # transforms.Resize(512),
+            utils_img.normalize_img,
+        ]
+    )
+    org_transform = transform
+
+    if aug == 'no_aug':
+        pass
+    elif aug == 'rotation':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.RandomRotation([-int(90 * float(params[0])), int(90 * float(params[0]))]),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'crop':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop(256 - int(128 * float(params[0]))),
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'flip':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.RandomHorizontalFlip(1.0),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'stretch':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop((256 - int(128 * float(params[0])), 256)),
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'blur': # remove
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.GaussianBlur(5),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'combo':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                transforms.CenterCrop((256 - int(128 * float(params[0])), 256)),
+                transforms.RandomHorizontalFlip(1.0),
+                transforms.RandomRotation([-int(90 * float(params[0])), int(90 * float(params[0]))]),
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'edit':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                EditImage(params[0], float(params[1]), save_imgs=False),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'edit stretch':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                EditImage(params[0], float(params[1]), save_imgs=False),
+                transforms.CenterCrop((256 - int(128 * float(params[2])), 256)),
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'edit combo':
+        transform = transforms.Compose(
+            [
+                transforms.Resize(256),
+                EditImage("make it snow"),
+                transforms.CenterCrop((128, 256)),
+                transforms.RandomHorizontalFlip(1.0),
+                transforms.RandomRotation([-90, 90]),
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ]
+        )
+    elif aug == 'gaussian':
+        transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.ToTensor(),
+            AddGaussianNoise(0., float(params[0])) # 0.05
+        ])
+    elif aug == 'diffpure':
+        transform = transforms.Compose([
+            # transforms.Resize(256),
+            transforms.ToTensor(),
+            # nn.Identity()
+            DiffPure(steps=float(params[0]), save_imgs=save_images, fname=fname),
+            # transforms.Resize(512),
+            utils_img.normalize_img,
+        ])
+    elif aug == 'diffpure_latent':
+        transform = transforms.Compose([
+            # transforms.Resize(256),
+            ImageRephrase(img_size=512, strength=float(params[0]), num_passes=int(params[1]), save_imgs=save_images, fname=fname),
+            # transforms.Resize(512),
+            utils_img.normalize_img,
+        ])
+    elif aug == 'capedit':
+        transform = transforms.Compose([
+            transforms.Resize(256),
+            CaptionBasedEdit(img_size=256, save_imgs=False),
+            transforms.ToTensor(),
+        ])
+    else:
+        print(f"Augmentation {aug} not implemented!!!")
+        return None, None
+    
+    return transform, org_transform
+
+class ImageDataset(Dataset):
+    def __init__(self, directory, transform=None):
+        self.directory = directory
+        self.transform = transform
+        self.image_files = os.listdir(directory)
+
+    def __len__(self):
+        return len(self.image_files)
+
+    def __getitem__(self, idx):
+        img_path = os.path.join(self.directory, self.image_files[idx])
+        image = Image.open(img_path).convert('RGB')
+
+        if self.transform:
+            image = self.transform(image).cuda()
+            # image = utils_img.normalize_img(image).to(torch.float32)
+            # image = self.transform(image)
+
+        return image
+
+def imshow(imgs1, imgs2, predictions1, predictions2,psnr,  nb = 5, name = "", dir = None):
+    # Assume imgs1 and imgs2 are your arrays of images
+    # predictions1 and predictions2 are the model's predictions for each array of images
+    # labels are the true labels
+
+    # Create a figure
+    fig, axs = plt.subplots(nb, 2, figsize=(10, 5*nb))
+
+    for i in range(nb):
+        # Display the first image from imgs1
+        img1 = imgs1[i].transpose((1, 2, 0))
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
+        img1 = std * img1 + mean
+        img1 = np.clip(img1, 0, 1)
+        axs[i, 0].imshow(img1)
+        axs[i, 0].set_title(f'Image 1: {predictions1[i]}')
+        axs[i, 0].axis('off')
+
+        # Display the first image from imgs2
+        img2 = imgs2[i].transpose((1, 2, 0))
+        img2 = std * img2 + mean
+        img2 = np.clip(img2, 0, 1)
+        axs[i, 1].imshow(img2)
+        axs[i, 1].set_title(f'Image 2: {predictions2[i]}, PSNR = {psnr[i]}')
+        axs[i, 1].axis('off')
+
+    # Save the figure in high quality
+    
+    path = f'results/plots/output_{name}.png' if dir is None else f'experiments_wm/{dir}/output_{name}.png'
+    plt.savefig(path, dpi=300)
+import math
+
+def normalize_image_batch(img_batch):
+    min_val = img_batch.min(axis=(1, 2, 3), keepdims=True)
+    max_val = img_batch.max(axis=(1, 2, 3), keepdims=True)
+    return (img_batch - min_val) / (max_val - min_val)
+
+def calculate_psnr(img1, img2):
+    # Assume the images are numpy arrays
+
+    img1 = normalize_image_batch(img1)
+    img2 = normalize_image_batch(img2)
+
+    mse = np.mean((img1 - img2) ** 2, (1,2,3))
+    try:
+        res = - 10 * np.log10(mse)
+    except:
+        res = mse
+    return res
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("--wm-method", default="dwtDct", type=str,
-        choices=["dwtDct", "dwtDctSvd", "rivaGan", "treeRing", 'watermarkDM', 'stegaStamp', 'MBRS'])
+        choices=["dwtDct", "dwtDctSvd", "rivaGan", "treeRing", 'watermarkDM', 'stegaStamp', 'MBRS', 'StableSig'])
     parser.add_argument("--attack", default="diffpure", type=str,
         choices=["no_aug", "diffpure", "diffpure_latent", 'common_augs', 'image_edit'])
     parser.add_argument("--data-dir", default="images/imagenet/dwtDct", type=str)
@@ -296,9 +510,11 @@ def main():
     if args.attack == 'no_aug':
         aug_list = ['no_aug']
     elif args.attack == 'diffpure':
-        aug_list = ['no_aug', 'diffpure,0.1', 'diffpure,0.2', 'diffpure,0.3']
+        # aug_list = ['no_aug', 'diffpure,0.1', 'diffpure,0.2', 'diffpure,0.3']
+        aug_list = ['diffpure,0.1']
     elif args.attack == 'diffpure_latent':
-        aug_list = ['no_aug', 'diffpure_latent,0.2,1', 'diffpure_latent,0.3,1', 'diffpure_latent,0.4,1']
+        # aug_list = ['no_aug', 'diffpure_latent,0.2,1', 'diffpure_latent,0.3,1', 'diffpure_latent,0.4,1']
+        aug_list = ['diffpure_latent,0.2,1']
     elif args.attack == 'common_augs':
         aug_list = ['no_aug', 'gaussian,0.02', 'gaussian,0.04', 'gaussian,0.08', 'gaussian,0.16',
             'crop,0.25', 'crop,0.5', 'crop,0.75', 'crop,1.0',
@@ -319,14 +535,21 @@ def main():
 
     for aug in aug_list:
         print("Augmentation:", aug)
-
-        transform, org_transform = get_transforms(aug, args.wm_method, args.save_images)
+        
+        if args.wm_method == "StableSig":
+            transform, org_transform = get_transforms_stable_sig(aug, args.wm_method, args.save_images)
+        else:
+            transform, org_transform = get_transforms(aug, args.wm_method, args.save_images)
         if transform == None:
             continue
-        
-        dataset = CustomImageFolder(args.data_dir, transform=transform)
-        data_cnt = len(dataset)
-        org_dataset = CustomImageFolder(args.org_data_dir, transform=org_transform, data_cnt=data_cnt)
+
+        if args.wm_method == "StableSig":
+            dataset = ImageDataset(args.data_dir, transform)
+            org_dataset = ImageDataset(args.data_dir, org_transform)
+        else:
+            dataset = CustomImageFolder(args.data_dir, transform=transform)
+            data_cnt = len(dataset)
+            org_dataset = CustomImageFolder(args.org_data_dir, transform=org_transform, data_cnt=data_cnt)
 
         th_results[aug] = {}
         labels[aug], preds[aug] = [], []
@@ -367,6 +590,42 @@ def main():
                     preds[aug].append(sum([wm_key[i] == watermark[i] for i in range(len(wm_key))]) / len(wm_key))
                 except:
                     preds[aug].append(1.)
+
+        elif args.wm_method == "StableSig":
+            dataloader = DataLoader(org_dataset, batch_size=1, shuffle=False, num_workers=0)
+            dataloader2 = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+            ckpt_path = "/private/home/tomsander/Watermark-Attack/old/configs/weights/stablesig_extractor_48b.torchscript.pt"
+            # ckpt_path = "/private/home/tomsander/Watermark-Attack/old/configs/weights/dec_48b_whit.torchscript.pt"
+            stable_sig = StableSig(ckpt_path, device="cuda")
+            preds_org = []
+            preds_wm = []
+
+            i = 0
+            psnr = []
+            images1 = []
+            images2 = []
+
+            nb_plot = 10
+
+            for image1, image2 in tqdm(zip(dataloader, dataloader2)):
+                if i<nb_plot:
+                    images1.append(image1)
+                    images2.append(image2)
+                i+=1
+                if i >10:
+                    break
+                x1 = stable_sig.detect_score(image1.to(stable_sig.device), stable_sig.code).cpu().item()
+                preds_org.append(x1)
+                x2 = stable_sig.detect_score(image2.to(stable_sig.device), stable_sig.code).cpu().item()
+                preds_wm.append(x2)
+                print(x1,x2)
+            images1 = torch.cat(images1).cpu().numpy()
+            images2 = torch.cat(images2).cpu().numpy()
+            psnr = calculate_psnr(images1, images2)
+            print("psnr", psnr)
+            imshow(images1, images2,preds_org[:nb_plot],preds_wm[:nb_plot],psnr=psnr, nb=nb_plot, name="test")
+            preds[aug] = preds_wm + preds_org
+            labels[aug] = [1 for i in range(len(preds_wm))] + [0 for i in range(len(preds_org))]
 
         elif args.wm_method == "treeRing":
             from utils.tree_ring import decode_tree_ring
